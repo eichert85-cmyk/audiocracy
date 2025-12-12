@@ -40,49 +40,29 @@ export default async function GuestRoomPage(props: RoomPageProps) {
     </div>
   );
 
-  // ─────────────────────────────────────────────────────────────
-  // STATE 1: NOT CONNECTED (The "Login Page" View)
-  // ─────────────────────────────────────────────────────────────
+  // --- MANDATORY LOGIN FLOW: If not connected, show the Connect screen ---
   if (!spotifyConnection.connected) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 relative">
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 relative text-slate-200">
         <Background />
-        
-        <div className="w-full max-w-sm z-10 flex flex-col gap-6 text-center">
-          <div className="space-y-2">
-             <div className="inline-flex items-center justify-center w-16 h-16 bg-slate-900 rounded-2xl border border-slate-800 shadow-xl mb-4 mx-auto">
-                <MusicIcon className="w-8 h-8 text-green-500" />
+        <div className="relative z-10 w-full max-w-sm text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-700 rounded-2xl shadow-xl mb-4">
+                <MusicIcon className="w-8 h-8 text-white" />
             </div>
-            <h1 className="text-3xl font-black text-white tracking-tight">{room.name}</h1>
-            <div className="inline-block bg-slate-900/80 backdrop-blur border border-slate-800 rounded-full px-4 py-1 text-sm font-mono text-slate-400">
-              Code: <span className="text-white font-bold tracking-widest">{room.code}</span>
-            </div>
-          </div>
-
-          <div className="bg-slate-900/60 backdrop-blur-xl border border-slate-800 rounded-3xl p-8 shadow-2xl">
-            <h2 className="text-xl font-bold text-white mb-3">Join the Party</h2>
-            <p className="text-slate-400 mb-6 text-sm leading-relaxed">
-              Connect your Spotify account to request songs, vote on the playlist, and help the DJ read the room.
+            <h1 className="text-2xl font-black text-white mb-2">Connect to Audiocracy</h1>
+            <p className="text-slate-400 mb-8">
+              We require Spotify login to analyze your listening habits. This powers the Vibe Report for the DJ.
             </p>
-
-            {/* PRIVACY DISCLAIMER (Critical for QR Code users who skip /enter) */}
-            <p className="text-xs text-slate-500 mb-8 px-2 border-l-2 border-slate-800 pl-3 text-left">
-              By connecting, you agree that we read your public profile, top tracks, and top artists to analyze musical trends. <strong>Your data is deleted 30 days after the event.</strong>
+            <SpotifyConnectButton connected={false} />
+            <p className="text-xs text-slate-500 mt-6 px-8">
+              Your data (top tracks/artists) is deleted 30 days after the event ends.
             </p>
-
-            <SpotifyConnectButton
-              connected={false}
-              displayName=""
-            />
-          </div>
         </div>
       </div>
     );
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // STATE 2: CONNECTED (The "Dashboard" View)
-  // ─────────────────────────────────────────────────────────────
+  // --- ROOM DISPLAY (Only if connected) ---
   return (
     <div className="min-h-screen bg-slate-950 relative text-slate-200">
       <Background />
@@ -101,19 +81,19 @@ export default async function GuestRoomPage(props: RoomPageProps) {
               </div>
             </div>
             
+            {/* Login Status Indicator */}
             <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-full pl-2 pr-3 py-1">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              <div className="flex flex-col items-start">
-                <span className="text-[10px] font-bold text-slate-300 leading-none">
-                  {spotifyConnection.displayName?.split(' ')[0] || 'Guest'}
+                <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                <span className="text-[10px] font-bold text-slate-300">
+                    {spotifyConnection.displayName?.split(' ')[0] || 'Guest'}
                 </span>
-              </div>
             </div>
           </div>
         </header>
 
         {/* Scrollable Content */}
-        <main className="flex-1 p-4 space-y-6">
+        <main className="flex-1 p-4 space-y-8">
+            
           {/* Search Section */}
           <section className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             <SpotifySearch />
@@ -130,7 +110,6 @@ export default async function GuestRoomPage(props: RoomPageProps) {
             <p className="text-[10px] text-slate-600 uppercase tracking-widest font-bold">
                 Audiocracy Live
             </p>
-            {/* Disconnect Button */}
             <LeaveRoomButton />
         </footer>
       </div>
