@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+:root {
+  /* Base app colors */
+  --background: #ffffff;
+  --foreground: #171717;
+
+  /* Brand colors (OPTIONAL, safe defaults)
+     In the future, a buyer could override these with:
+     --brand-primary: <their color>;
+     --brand-accent: <their color>; 
+  */
+  --brand-primary: hsl(222, 84%, 56%); /* neutral blue */
+  --brand-accent: hsl(262, 83%, 58%);  /* neutral violet */
+}
+
+/* Tailwind theme tokens */
+@theme inline {
+  /* Map your CSS variables into Tailwind color tokens */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  /* Brand color tokens (used by classes like bg-brand-primary, text-brand-accent) */
+  --color-brand-primary: var(--brand-primary);
+  --color-brand-accent: var(--brand-accent);
+
+  /* Keep existing font tokens */
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* Dark mode base colors (brand colors stay the same by default) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+    /* You can also adjust brand colors for dark mode later if you want,
+       but it's not required. They safely stay as-is for now. */
+  }
+}
+
+/* Global body styles */
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
