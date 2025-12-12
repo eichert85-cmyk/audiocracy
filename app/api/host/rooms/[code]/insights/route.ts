@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
-// Removed: import { getUSTop50Ids } from "@/lib/spotifyHost"; 
 
-export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
-  const roomCode = params.code;
+// Define the required context type for the route handler
+interface RouteContext {
+  params: {
+    code: string;
+  };
+}
+
+// FIX: Changed signature to explicitly use 'context' argument
+export async function GET(req: NextRequest, context: RouteContext) {
+  const roomCode = context.params.code; // Access code from context.params
   const supabase = await createSupabaseServerClient();
 
   try {
@@ -35,7 +42,6 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
       return NextResponse.json({ success: false, error: "Failed to fetch history" }, { status: 500 });
     }
 
-    // FIX: Renamed the count variable to match the desired output property name
     const totalHistoryTracks = history?.length || 0;
 
     // --- Insight Calculations ---
@@ -49,7 +55,6 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
       totalValence += track.valence || 0;
     });
 
-    // Use totalHistoryTracks in calculation
     const averageEnergy = totalHistoryTracks > 0 ? totalEnergy / totalHistoryTracks : 0;
     const averageValence = totalHistoryTracks > 0 ? totalValence / totalHistoryTracks : 0;
 
@@ -101,7 +106,7 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
       insights: {
         totalGuests: totalGuests || 0,
         totalRequests: totalRequests || 0,
-        totalHistoryTracks, // Shorthand property now valid
+        totalHistoryTracks,
         averageEnergy: parseFloat(averageEnergy.toFixed(2)),
         averageValence: parseFloat(averageValence.toFixed(2)),
         decadeDistribution: decadeCounts,
