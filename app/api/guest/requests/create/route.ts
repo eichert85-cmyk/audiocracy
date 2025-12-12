@@ -17,8 +17,8 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => null);
-    // Capture releaseYear from the request body
-    const { trackId, trackName, artistName, popularity, releaseYear } = body || {}; 
+    // Capture releaseYear AND albumArt
+    const { trackId, trackName, artistName, popularity, releaseYear, albumArt } = body || {}; 
 
     if (!trackId || !trackName) {
       return NextResponse.json({ success: false, error: "Missing track data" }, { status: 400 });
@@ -57,7 +57,8 @@ export async function POST(req: NextRequest) {
         song_title: trackName,
         artist_name: artistName,
         popularity: popularity || 0,
-        release_year: releaseYear || null, // <--- Saving the year!
+        release_year: releaseYear || null,
+        album_art: albumArt || null, // <--- Saving the image URL now!
       })
       .select()
       .single();
