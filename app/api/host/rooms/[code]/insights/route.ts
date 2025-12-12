@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
-// Define the required context type for the route handler
-interface RouteContext {
-  params: {
-    code: string;
-  };
-}
+// Removed RouteContext interface to simplify typing
 
-// FIX: Changed signature to explicitly use 'context' argument
-export async function GET(req: NextRequest, context: RouteContext) {
-  const roomCode = context.params.code; // Access code from context.params
+// FIX: Corrected the function signature to use the correct destructured type annotation
+export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
+  const roomCode = params.code; // Access code directly from params
   const supabase = await createSupabaseServerClient();
 
   try {
