@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
-// FIX: Corrected the function signature to use the correct destructured type annotation
-export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
-  const roomCode = params.code;
+// Next.js 15: params is a Promise
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ code: string }> }
+) {
+  // Await the params to extract the room code
+  const { code } = await params;
+  const roomCode = code;
+  
   const supabase = await createSupabaseServerClient();
 
   try {
@@ -47,7 +53,6 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
     }
 
     // 3. Process and Rank Requests
-    
     const processedRequests = requests
       .map(req => ({
         id: req.id,
