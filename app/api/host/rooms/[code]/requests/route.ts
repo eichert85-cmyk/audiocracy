@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
-// Next.js 15: params is a Promise
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ code: string }> }
 ) {
-  // Await the params to extract the room code
   const { code } = await params;
   const roomCode = code;
   
@@ -31,6 +29,7 @@ export async function GET(
     }
 
     // 2. Fetch Requests and Vote Counts
+    // FIX: Using correct table name 'room_request_votes'
     const { data: requests, error: requestsError } = await supabase
       .from("room_requests")
       .select(`
@@ -42,10 +41,10 @@ export async function GET(
         popularity, 
         created_at,
         release_year,
-        song_votes(id, guest_id)
+        room_request_votes(id, guest_id, vote_val) 
       `)
       .eq("room_id", room.id)
-      .order("created_at", { ascending: true }); // Default sort by submission time
+      .order("created_at", { ascending: true });
 
     if (requestsError) {
       console.error("Error fetching requests:", requestsError);
@@ -53,8 +52,12 @@ export async function GET(
     }
 
     // 3. Process and Rank Requests
-    const processedRequests = requests
-      .map(req => ({
+    const processedRequests = requests.map(req => {
+      // FIX: Accessing correct property 'room_request_votes'
+      const votes = req.room_request_votes || [];
+      const score = votes.reduce((acc: number, v: any) => acc + (v.vote_val || 0), 0);
+      
+      return {
         id: req.id,
         title: req.song_title,
         artist: req.artist_name,
@@ -62,17 +65,16 @@ export async function GET(
         albumArt: req.album_art,
         popularity: req.popularity,
         releaseYear: req.release_year,
-        voteCount: req.song_votes.length,
+        voteCount: score, 
         createdAt: req.created_at,
-      }))
-      // Sort: 1. By Vote Count (desc) 2. By Spotify Popularity (desc)
-      .sort((a, b) => {
+      };
+    }).sort((a, b) => {
+        // Sort by Vote Count (desc), then Popularity (desc)
         if (a.voteCount !== b.voteCount) {
           return b.voteCount - a.voteCount;
         }
         return b.popularity - a.popularity;
-      });
-
+    });
 
     return NextResponse.json({ success: true, requests: processedRequests });
   } catch (err) {

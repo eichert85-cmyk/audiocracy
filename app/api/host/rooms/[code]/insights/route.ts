@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
-// Next.js 15: params must be typed as a Promise
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ code: string }> }
 ) {
-  // Await the params to get the code
   const { code } = await params;
-  
   const supabase = await createSupabaseServerClient();
 
   try {
@@ -26,7 +23,7 @@ export async function GET(
       .single();
 
     if (roomError || !room) {
-      return NextResponse.json({ success: false, error: "Room not found or unauthorized" }, { status: 404 });
+      return NextResponse.json({ success: false, error: "Room not found" }, { status: 404 });
     }
 
     // 2. Fetch Harvested Guest Top Tracks
@@ -56,7 +53,7 @@ export async function GET(
     const averageEnergy = totalHistoryTracks > 0 ? totalEnergy / totalHistoryTracks : 0;
     const averageValence = totalHistoryTracks > 0 ? totalValence / totalHistoryTracks : 0;
 
-    // B. Decade Counts (for Vibe Report)
+    // B. Decade Counts
     const decadeCounts: Record<string, number> = {};
     history?.forEach(track => {
       if (track.release_year) {
@@ -73,30 +70,17 @@ export async function GET(
       trackFrequency[key] = (trackFrequency[key] || 0) + 1;
     });
 
-    const popularTracks = Object.entries(trackFrequency)
-      .sort(([, countA], [, countB]) => countB - countA)
-      .slice(0, 5) // Top 5
-      .map(([track_id, count]) => ({ track_id, count }));
-      
     // D. Fetch Request Counts
-    const { count: totalRequests, error: requestCountError } = await supabase
+    const { count: totalRequests } = await supabase
       .from("room_requests")
       .select("id", { count: 'exact', head: true })
       .eq("room_id", room.id);
-
-    if (requestCountError) {
-        console.error("Error fetching request count:", requestCountError);
-    }
     
-    // E. Total Guests
-    const { count: totalGuests, error: guestCountError } = await supabase
-      .from("guest_sessions")
+    // E. Total Guests (FIX: Changed from guest_sessions to guests)
+    const { count: totalGuests } = await supabase
+      .from("guests")
       .select("id", { count: 'exact', head: true })
-      .eq("room_id", room.id);
-
-    if (guestCountError) {
-        console.error("Error fetching guest count:", guestCountError);
-    }
+      .eq("wedding_id", room.id);
 
     return NextResponse.json({
       success: true,
