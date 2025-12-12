@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
-// Removed import of getUSTop50Ids
 
+// FIX: Corrected the function signature to use the correct destructured type annotation
 export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
   const roomCode = params.code;
   const supabase = await createSupabaseServerClient();
@@ -48,7 +48,6 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
 
     // 3. Process and Rank Requests
     
-    // REMOVED: No call to getUSTop50Ids or is_trending calculation
     const processedRequests = requests
       .map(req => ({
         id: req.id,
@@ -59,7 +58,6 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
         popularity: req.popularity,
         releaseYear: req.release_year,
         voteCount: req.song_votes.length,
-        // isTrending field is now permanently removed from the response
         createdAt: req.created_at,
       }))
       // Sort: 1. By Vote Count (desc) 2. By Spotify Popularity (desc)
