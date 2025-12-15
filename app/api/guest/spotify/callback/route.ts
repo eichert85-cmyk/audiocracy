@@ -94,8 +94,7 @@ export async function GET(request: Request) {
     const profile = await profileRes.json();
     const spotifyId = profile.id;
 
-    // 5. Update Guest Profile (WITH DEBUGGING)
-    // We explicitly capture the error here to see why it fails
+    // 5. Update Guest Profile
     const { error: insertError } = await supabase.from("guests").upsert(
       {
           wedding_id: parseInt(roomId),
@@ -108,81 +107,88 @@ export async function GET(request: Request) {
     );
 
     if (insertError) {
-        // 🛑 THIS IS THE CRITICAL LOG
         console.error("🚨 GUEST INSERT FAILED:", insertError);
-        console.error("Payload attempted:", {
-            wedding_id: parseInt(roomId),
-            spotify_id: spotifyId,
-            display_name: profile.display_name
-        });
-    } else {
-        console.log("✅ Guest inserted successfully:", spotifyId);
     }
 
-    // 6. Harvest Data (Background)
-    fetch("https://api.spotify.com/v1/me/top/artists?limit=50&time_range=medium_term", {
-        headers: { Authorization: `Bearer ${access_token}` },
-    }).then(async (res) => {
-        if (res.ok) {
-            const data = await res.json();
-            const rows = data.items.map((a: any, i: number) => ({
-            guest_spotify_id: spotifyId,
-            guest_id: spotifyId,
-            room_id: parseInt(roomId!),
-            artist_id: a.id,
-            artist_name: a.name,
-            image_url: a.images?.[0]?.url || null,
-            genre: a.genres?.[0] || null,
-            rank: i + 1
-            }));
-            if (rows.length) await supabase.from("guest_top_artists").upsert(rows, { onConflict: "guest_spotify_id, artist_id" });
-        }
-    });
-
-    fetch("https://api.spotify.com/v1/me/top/tracks?limit=50&time_range=medium_term", {
-        headers: { Authorization: `Bearer ${access_token}` },
-    }).then(async (res) => {
-        if (res.ok) {
-            const data = await res.json();
-            // Get Audio Features
-            const trackIds = data.items.map((t: any) => t.id).join(",");
-            let featuresMap: Record<string, any> = {};
-            if (trackIds) {
-                 try {
-                    const featRes = await fetch(`https://api.spotify.com/v1/audio-features?ids=${trackIds}`, {
-                        headers: { Authorization: `Bearer ${access_token}` },
-                    });
-                    if (featRes.ok) {
-                        const featJson = await featRes.json();
-                        featJson.audio_features.forEach((f: any) => { if(f) featuresMap[f.id] = f; });
-                    }
-                 } catch(e) {}
-            }
-
-            const rows = data.items.map((t: any, i: number) => {
-                const f = featuresMap[t.id] || {};
-                const releaseDate = t.album?.release_date || "";
-                const releaseYear = releaseDate ? parseInt(releaseDate.split("-")[0]) : null;
-
-                return {
+    // 6. Harvest Data (AWAITED via Promise.all)
+    // We run these in parallel but WAIT for them to finish before redirecting
+    const harvestArtists = async () => {
+        try {
+            const res = await fetch("https://api.spotify.com/v1/me/top/artists?limit=50&time_range=medium_term", {
+                headers: { Authorization: `Bearer ${access_token}` },
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const rows = data.items.map((a: any, i: number) => ({
                     guest_spotify_id: spotifyId,
                     guest_id: spotifyId,
                     room_id: parseInt(roomId!),
-                    track_id: t.id,
-                    track_name: t.name,
-                    artist_name: t.artists?.[0]?.name || "Unknown",
-                    image_url: t.album?.images?.[0]?.url || null,
-                    rank: i + 1,
-                    release_year: releaseYear,
-                    danceability: f.danceability || null,
-                    energy: f.energy || null,
-                    valence: f.valence || null,
-                    tempo: f.tempo || null
-                };
-            });
-            if (rows.length) await supabase.from("guest_top_tracks").upsert(rows, { onConflict: "guest_spotify_id, track_id" });
+                    artist_id: a.id,
+                    artist_name: a.name,
+                    image_url: a.images?.[0]?.url || null,
+                    genre: a.genres?.[0] || null,
+                    rank: i + 1
+                }));
+                if (rows.length) await supabase.from("guest_top_artists").upsert(rows, { onConflict: "guest_spotify_id, artist_id" });
+            }
+        } catch (e) {
+            console.error("Artist harvest failed:", e);
         }
-    });
+    };
+
+    const harvestTracks = async () => {
+        try {
+            const res = await fetch("https://api.spotify.com/v1/me/top/tracks?limit=50&time_range=medium_term", {
+                headers: { Authorization: `Bearer ${access_token}` },
+            });
+            if (res.ok) {
+                const data = await res.json();
+                
+                // Get Audio Features
+                const trackIds = data.items.map((t: any) => t.id).join(",");
+                let featuresMap: Record<string, any> = {};
+                if (trackIds) {
+                    try {
+                        const featRes = await fetch(`https://api.spotify.com/v1/audio-features?ids=${trackIds}`, {
+                            headers: { Authorization: `Bearer ${access_token}` },
+                        });
+                        if (featRes.ok) {
+                            const featJson = await featRes.json();
+                            featJson.audio_features.forEach((f: any) => { if(f) featuresMap[f.id] = f; });
+                        }
+                    } catch(e) {}
+                }
+
+                const rows = data.items.map((t: any, i: number) => {
+                    const f = featuresMap[t.id] || {};
+                    const releaseDate = t.album?.release_date || "";
+                    const releaseYear = releaseDate ? parseInt(releaseDate.split("-")[0]) : null;
+
+                    return {
+                        guest_spotify_id: spotifyId,
+                        guest_id: spotifyId,
+                        room_id: parseInt(roomId!),
+                        track_id: t.id,
+                        track_name: t.name,
+                        artist_name: t.artists?.[0]?.name || "Unknown",
+                        image_url: t.album?.images?.[0]?.url || null,
+                        rank: i + 1,
+                        release_year: releaseYear,
+                        danceability: f.danceability || null,
+                        energy: f.energy || null,
+                        valence: f.valence || null,
+                        tempo: f.tempo || null
+                    };
+                });
+                if (rows.length) await supabase.from("guest_top_tracks").upsert(rows, { onConflict: "guest_spotify_id, track_id" });
+            }
+        } catch (e) {
+            console.error("Track harvest failed:", e);
+        }
+    };
+
+    // WAIT for harvest to complete
+    await Promise.all([harvestArtists(), harvestTracks()]);
 
     // 7. Set Cookies & Redirect
     const secure = process.env.NODE_ENV === "production";
