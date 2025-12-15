@@ -7,6 +7,9 @@ import {
 import DeleteRequestButton from "./DeleteRequestButton";
 import VoteButtons from "./VoteButtons";
 
+// Force this component to always fetch fresh data (no caching)
+export const dynamic = "force-dynamic";
+
 // Icons
 const UserIcon = ({ className }: { className?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
@@ -24,12 +27,12 @@ export default async function RequestList() {
 
   const supabase = await createSupabaseServerClient();
 
-  // 1. Fetch Requests
+  // 1. Fetch Requests (Ordered by time as a baseline)
   const { data: requests, error: reqError } = await supabase
     .from("room_requests")
     .select("*")
     .eq("room_id", roomId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: true }); // Match Host's baseline order
 
   if (reqError) {
     return (
@@ -52,12 +55,25 @@ export default async function RequestList() {
     votes = voteData || [];
   }
 
-  // Sort by Score (High to Low) instead of time
+  // 3. Sort to match Host Dashboard (Votes -> Popularity -> Time)
   const sortedRequests = requestRows.map((req) => {
     const reqVotes = votes.filter((v) => v.room_request_id === req.id);
     const score = reqVotes.reduce((acc, v) => acc + v.vote_val, 0);
     return { ...req, score, reqVotes };
-  }).sort((a, b) => b.score - a.score);
+  }).sort((a, b) => {
+    // Primary Sort: Score (Highest First)
+    if (b.score !== a.score) {
+        return b.score - a.score;
+    }
+    // Secondary Sort: Popularity (Highest First)
+    const popA = a.popularity || 0;
+    const popB = b.popularity || 0;
+    if (popB !== popA) {
+        return popB - popA;
+    }
+    // Tertiary Sort: Time (Oldest First) - FIFO logic
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+  });
 
   return (
     <div className="space-y-4 pb-24">
@@ -102,7 +118,7 @@ export default async function RequestList() {
               key={req.id}
               className="group relative bg-slate-900/60 backdrop-blur-md border border-slate-800 rounded-2xl p-4 shadow-xl flex gap-4 transition-all hover:bg-slate-900/80 hover:border-slate-700"
             >
-              {/* VOTE BUTTONS (Left Side - The Arrows) */}
+              {/* VOTE BUTTONS (Left Side) */}
               <div className="flex flex-col items-center justify-center gap-1 min-w-[2.5rem] border-r border-slate-800/50 pr-4">
                  <VoteButtons 
                     requestId={req.id}
@@ -125,7 +141,7 @@ export default async function RequestList() {
                     </p>
                 </div>
 
-                {/* META ROW: User Label + Popularity Meter */}
+                {/* META ROW */}
                 <div className="flex items-end justify-between pt-2 mt-1">
                     
                     {/* User Indicator / Delete Action */}
