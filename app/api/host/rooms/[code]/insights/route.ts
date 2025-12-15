@@ -26,7 +26,7 @@ export async function GET(
       return NextResponse.json({ success: false, error: "Room not found" }, { status: 404 });
     }
 
-    // 2. Fetch Artists (RESTORED)
+    // 2. Fetch Artists
     const { data: artists } = await supabase
       .from("guest_top_artists")
       .select("artist_name, guest_spotify_id, image_url, genre")
@@ -60,8 +60,7 @@ export async function GET(
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
 
-    // 3. Fetch Tracks (RESTORED ALL COLUMNS)
-    // Included track_name, artist_name, image_url for the UI
+    // 3. Fetch Tracks (Verified columns against your CSV)
     const { data: history, error: historyError } = await supabase
       .from("guest_top_tracks")
       .select("track_name, artist_name, image_url, valence, energy, danceability, tempo, release_year, track_id, guest_spotify_id")
@@ -75,7 +74,7 @@ export async function GET(
 
     // --- Aggregations ---
     
-    // A. Top Tracks Logic
+    // A. Top Tracks Logic (NOW WITH FUZZY MATCHING)
     const trackCounts: Record<string, { count: number, name: string, artist: string, image: string | null, guests: Set<string> }> = {};
     
     // B. Vibe Logic
@@ -89,12 +88,19 @@ export async function GET(
     const decadeCounts: Record<string, number> = {};
 
     history?.forEach(track => {
-        // Track Popularity
-        const key = track.track_id; 
+        // Track Popularity - Normalize Title/Artist to group different versions
+        // Removes anything after " -", " (", or " ["
+        const rawTitle = track.track_name || "";
+        const cleanTitle = rawTitle.split(' -')[0].split(' (')[0].split(' [')[0].trim().toLowerCase();
+        const cleanArtist = (track.artist_name || "").trim().toLowerCase();
+        
+        // Use the CLEAN key for grouping, not the ID
+        const key = `${cleanArtist}:::${cleanTitle}`; 
+
         if (!trackCounts[key]) {
             trackCounts[key] = {
                 count: 0,
-                name: track.track_name,
+                name: track.track_name, // Keep the display name of the first version found
                 artist: track.artist_name,
                 image: track.image_url,
                 guests: new Set()
