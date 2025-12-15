@@ -6,8 +6,6 @@ interface PageProps {
   params: Promise<{ roomCode: string }>;
 }
 
-// Helper to generate a fuzzy match signature consistent with the SQL logic
-// Logic: lowercase, trim, remove text after " -" or " ("
 const getSignature = (artist: string, title: string) => {
   if (!artist || !title) return "";
   const cleanTitle = title.split(' -')[0].split(' (')[0].split(' [')[0].trim().toLowerCase();
@@ -32,122 +30,101 @@ export default async function VibeReportPage({ params }: PageProps) {
 
   if (!room) return notFound();
 
-  // 2. Fetch Requests
+  // 2. Fetch Requests with Votes
   const { data: requests } = await supabase
     .from("room_requests")
-    .select("song_title, artist_name, release_year, created_at")
+    .select(`
+      song_title, 
+      artist_name, 
+      release_year, 
+      room_request_votes(vote_val)
+    `)
     .eq("room_id", room.id);
 
   // 3. Fetch Harvested History
   const { data: history } = await supabase
     .from("guest_top_tracks")
-    .select("track_name, artist_name, release_year, energy, valence")
+    .select("track_name, artist_name, release_year")
     .eq("room_id", room.id);
 
-  // 4. Fetch Curated Classics (Reference DB)
-  // We fetch the signature and category to match against guest history
+  // 4. Fetch Curated Classics
   const { data: classics } = await supabase
     .from("curated_classics")
-    .select("clean_signature, category, song_title, artist_name");
+    .select("clean_signature, category, song_title");
 
-  // Build a Map for fast lookup of classics
-  const classicsMap = new Map();
-  classics?.forEach(c => {
-    if (!classicsMap.has(c.clean_signature)) {
-      classicsMap.set(c.clean_signature, { 
-        title: c.song_title, 
-        artist: c.artist_name, 
-        categories: new Set() 
-      });
-    }
-    classicsMap.get(c.clean_signature).categories.add(c.category);
-  });
+  // --- 5. DATA CRUNCHING ---
 
-  // --- ANALYSIS LOGIC ---
-
-  // A. Decades Calculation
-  const decadeCounts: Record<string, { requestCount: number; historyCount: number }> = {};
+  // A. Determine Winning Decade
+  const decadeCounts: Record<string, number> = {};
   const getDecade = (year: number) => Math.floor(year / 10) * 10;
 
-  // Count Requests
-  requests?.forEach((r) => {
+  // Weight: Requests (3 pts) + History (1 pt)
+  requests?.forEach(r => {
     if (r.release_year) {
       const d = getDecade(r.release_year);
-      if (!decadeCounts[d]) decadeCounts[d] = { requestCount: 0, historyCount: 0 };
-      decadeCounts[d].requestCount++;
+      decadeCounts[d] = (decadeCounts[d] || 0) + 3;
     }
   });
-
-  // Count History
-  let totalHistoryTracks = 0;
-  history?.forEach((h) => {
+  history?.forEach(h => {
     if (h.release_year) {
       const d = getDecade(h.release_year);
-      if (!decadeCounts[d]) decadeCounts[d] = { requestCount: 0, historyCount: 0 };
-      decadeCounts[d].historyCount++;
-      totalHistoryTracks++;
+      decadeCounts[d] = (decadeCounts[d] || 0) + 1;
     }
   });
 
-  // Determine "Winning Decade"
-  let winningDecade = 0;
+  let winningDecade = 2020; // Default
   let maxScore = -1;
-  Object.entries(decadeCounts).forEach(([decade, counts]) => {
-    const score = (counts.requestCount * 2) + counts.historyCount;
+  Object.entries(decadeCounts).forEach(([decade, score]) => {
     if (score > maxScore) {
       maxScore = score;
       winningDecade = parseInt(decade);
     }
   });
 
-  // B. Find "Sure Things" (Overlap between Requests and History)
-  const historySet = new Set(history?.map(h => `${h.track_name}:::${h.artist_name}`.toLowerCase()));
-  const sureThings = requests?.filter(r => 
-    historySet.has(`${r.song_title}:::${r.artist_name}`.toLowerCase())
-  ).slice(0, 5) || [];
+  // B. Build "The Hit List" for the Winning Decade
+  
+  // Filter Requests from this decade
+  const decadeRequests = requests
+    ?.filter(r => r.release_year && getDecade(r.release_year) === winningDecade)
+    .map(r => ({
+      title: r.song_title,
+      artist: r.artist_name,
+      votes: r.room_request_votes.reduce((acc, v) => acc + v.vote_val, 0),
+      source: "Request"
+    }))
+    .sort((a, b) => b.votes - a.votes) || [];
 
-  // C. Find "Hidden Gems" (High history count, but NOT requested yet)
-  const historyFrequency: Record<string, number> = {};
-  history?.forEach(h => {
-    const key = `${h.track_name}:::${h.artist_name}`; 
-    historyFrequency[key] = (historyFrequency[key] || 0) + 1;
-  });
-  
-  const requestedSet = new Set(requests?.map(r => `${r.song_title}:::${r.artist_name}`.toLowerCase()));
-  
-  const hiddenGems = Object.entries(historyFrequency)
-    .filter(([key, count]) => count > 1 && !requestedSet.has(key.toLowerCase()))
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([key, count]) => {
-      const [title, artist] = key.split(":::");
-      return { title, artist, count };
+  // Filter History from this decade
+  const historyFreq: Record<string, number> = {};
+  history
+    ?.filter(h => h.release_year && getDecade(h.release_year) === winningDecade)
+    .forEach(h => {
+      const key = `${h.artist_name}:::${h.track_name}`;
+      historyFreq[key] = (historyFreq[key] || 0) + 1;
     });
 
-  // D. Find "Verified Bangers"
-  const verifiedBangers = Object.entries(historyFrequency)
+  const decadeHistory = Object.entries(historyFreq)
     .map(([key, count]) => {
-      const [rawTitle, rawArtist] = key.split(":::");
-      const signature = getSignature(rawArtist, rawTitle); 
-      const match = classicsMap.get(signature);
-
-      return {
-        title: rawTitle,
-        artist: rawArtist,
-        count,
-        categories: match ? Array.from(match.categories as Set<string>) : []
-      };
+      const [artist, title] = key.split(":::");
+      return { title, artist, count, source: "History" };
     })
-    .filter(item => item.categories.length > 0 && item.count > 1) 
     .sort((a, b) => b.count - a.count)
-    .slice(0, 10);
+    .slice(0, 10); // Top 10
+
+  // Check against Verified Classics (PDF Data)
+  // We look for classics that match the winning decade category (e.g. "80s")
+  const classicsSet = new Set(
+    classics
+      ?.filter(c => c.category.includes(winningDecade.toString().substring(2))) // "80s" matches "1980"
+      .map(c => c.clean_signature)
+  );
 
   return (
     <div className="min-h-screen bg-slate-100 p-6 md:p-12 font-sans">
-      <div className="max-w-4xl mx-auto bg-white shadow-xl rounded-2xl overflow-hidden border border-slate-200">
+      <div className="max-w-5xl mx-auto bg-white shadow-xl rounded-2xl overflow-hidden border border-slate-200">
         
         {/* Header */}
-        <div className="bg-slate-900 p-8 text-white flex justify-between items-start">
+        <div className="bg-slate-900 p-8 text-white flex justify-between items-center">
           <div>
             <h1 className="text-3xl font-black tracking-tight uppercase">Vibe Report</h1>
             <p className="text-slate-400 mt-1 font-mono text-sm">Targeting Analysis for {room.name}</p>
@@ -160,131 +137,115 @@ export default async function VibeReportPage({ params }: PageProps) {
           </Link>
         </div>
 
-        <div className="p-8 space-y-12">
+        <div className="p-8">
           
-          {/* 1. The Strategy */}
-          <section>
-            <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">
-              Winning Strategy
-            </h2>
-            <div className="flex items-start gap-6">
-              {/* FIX: Reduced font size and padding to fit "2020s" */}
-              <div className="bg-[#1DB954] text-white p-3 rounded-2xl text-center min-w-[110px] shadow-lg shadow-green-900/10 flex flex-col justify-center">
-                <span className="block text-3xl font-black tracking-tight">{winningDecade}s</span>
-                <span className="text-[10px] font-bold uppercase tracking-wider opacity-90">Decade</span>
-              </div>
-              <div>
-                <h3 className="text-xl font-bold text-slate-800 mb-2">Focus on the {winningDecade}s</h3>
-                <p className="text-slate-600 text-sm leading-relaxed">
-                  This era has the highest engagement. 
-                  {decadeCounts[winningDecade]?.requestCount > 0 ? (
-                    <> You have <strong>{decadeCounts[winningDecade]?.requestCount} requests</strong> from this decade.</>
-                  ) : (
-                    <> While no requests yet, your guests listen to this era heavily.</>
-                  )}
-                  { " " }
-                  Use this as your "Safe Zone" to reset the dance floor.
-                </p>
-              </div>
+          {/* 1. The Strategy Headline */}
+          <div className="flex items-start gap-6 mb-12 p-6 bg-slate-50 rounded-2xl border border-slate-100">
+            <div className="bg-[#1DB954] text-white p-4 rounded-2xl text-center min-w-[120px] shadow-lg shadow-green-900/10">
+              <span className="block text-4xl font-black">{winningDecade}s</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider opacity-90">Winning Era</span>
             </div>
-          </section>
-
-          {/* 2. Verified Bangers */}
-          <section>
-            <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">
-              🏆 Verified Bangers
-            </h2>
-            <p className="text-sm text-slate-500 mb-4">
-              These songs appear in your guests history <strong className="text-slate-800">AND</strong> your verified charts. These are statistically safe bets.
-            </p>
-
-            {verifiedBangers.length > 0 ? (
-              <div className="grid md:grid-cols-2 gap-3">
-                {verifiedBangers.map((song, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-blue-50/50 border border-blue-100 hover:border-blue-300 transition-colors group">
-                    <div className="min-w-0 flex-1 mr-4">
-                      <div className="text-sm font-bold text-slate-900 truncate">{song.title}</div>
-                      <div className="text-xs text-slate-500 truncate">{song.artist}</div>
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {song.categories.map(cat => (
-                          <span key={cat} className="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-white border border-slate-200 text-slate-500">
-                            {cat.replace(/_/g, ' ')}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="flex flex-col items-center justify-center bg-white border border-blue-100 w-12 h-12 rounded-lg shadow-sm">
-                      <span className="text-lg font-black text-blue-600 leading-none">{song.count}</span>
-                      <span className="text-[8px] font-bold text-slate-400 uppercase">Fans</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="p-8 bg-slate-50 rounded-xl border border-dashed border-slate-200 text-center">
-                <p className="text-slate-400 text-sm">No direct overlap between guest history and your charts yet.</p>
-                <p className="text-xs text-slate-400 mt-1">Wait for more guests to join!</p>
-              </div>
-            )}
-          </section>
-
-          {/* 3. Requests & Gems Grid */}
-          <section className="grid md:grid-cols-2 gap-10">
-            {/* Sure Things */}
             <div>
-              <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">
-                💎 Requests x History
-              </h2>
-              <p className="text-[10px] text-slate-500 mb-3">Guests requested these AND listen to them.</p>
-              
-              {sureThings.length > 0 ? (
-                <ul className="space-y-2">
-                  {sureThings.map((song, i) => (
-                    <li key={i} className="flex items-center gap-3 p-2 rounded-lg bg-green-50 border border-green-100">
-                      <div className="w-6 h-6 flex items-center justify-center bg-green-200 text-green-700 rounded-full text-xs font-bold">✓</div>
-                      <div className="min-w-0">
-                        <div className="text-sm font-bold text-slate-800 truncate">{song.song_title}</div>
-                        <div className="text-xs text-slate-500 truncate">{song.artist_name}</div>
+              <h3 className="text-2xl font-bold text-slate-800 mb-2">The {winningDecade}s Strategy</h3>
+              <p className="text-slate-600 leading-relaxed">
+                This is your strongest era. 
+                Guests have requested <strong>{decadeRequests.length} songs</strong> from this decade, 
+                and we found <strong>{decadeHistory.length} potential hits</strong> in their listening history.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-12">
+            
+            {/* 2. Top Requests (High Demand) */}
+            <div>
+              <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-2">
+                 <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">
+                  🔥 {winningDecade}s Requests
+                </h2>
+                <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded">
+                   High Priority
+                </span>
+              </div>
+             
+              {decadeRequests.length > 0 ? (
+                <div className="space-y-2">
+                  {decadeRequests.slice(0, 10).map((song, i) => {
+                    // Check if this request is also a verified classic
+                    const sig = getSignature(song.artist, song.title);
+                    const isCertified = classicsSet.has(sig);
+
+                    return (
+                      <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-white border border-slate-200 shadow-sm hover:border-green-500 transition-colors">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-slate-900 truncate">{song.title}</span>
+                            {isCertified && (
+                              <span className="text-[8px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide" title="On Verified Top Lists">
+                                Certified
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500 truncate">{song.artist}</div>
+                        </div>
+                        <div className="flex flex-col items-center px-2">
+                          <span className="text-lg font-black text-green-600 leading-none">{song.votes > 0 ? `+${song.votes}` : song.votes}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase">Votes</span>
+                        </div>
                       </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="p-4 bg-slate-50 rounded-lg text-slate-400 text-xs italic text-center">
-                  No direct overlaps yet.
+                    );
+                  })}
                 </div>
+              ) : (
+                <p className="text-sm text-slate-400 italic">No specific requests from this decade yet.</p>
               )}
             </div>
 
-            {/* Hidden Gems */}
+            {/* 3. Hidden Gems (Crowd Potential) */}
             <div>
-              <h2 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 border-b border-slate-100 pb-2">
-                🔍 Hidden Gems
-              </h2>
-              <p className="text-[10px] text-slate-500 mb-3">Popular in history, but NOT requested.</p>
+               <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-2">
+                 <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">
+                  💎 {winningDecade}s Hidden Gems
+                </h2>
+                <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded">
+                   Context: {decadeHistory.length} Tracks found
+                </span>
+              </div>
 
-              {hiddenGems.length > 0 ? (
-                <ul className="space-y-2">
-                  {hiddenGems.map((song, i) => (
-                    <li key={i} className="flex items-center justify-between p-2 rounded-lg bg-white border border-slate-200 shadow-sm">
-                      <div className="min-w-0">
-                        <div className="text-sm font-bold text-slate-800 truncate">{song.title}</div>
-                        <div className="text-xs text-slate-500 truncate">{song.artist}</div>
+              {decadeHistory.length > 0 ? (
+                <div className="space-y-2">
+                  {decadeHistory.map((song, i) => {
+                     // Check if this history item is a verified classic
+                     const sig = getSignature(song.artist, song.title);
+                     const isCertified = classicsSet.has(sig);
+                     
+                     return (
+                      <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-100 opacity-90 hover:opacity-100 transition-opacity">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-slate-800 truncate">{song.title}</span>
+                            {isCertified && (
+                              <span className="text-[8px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold uppercase tracking-wide">
+                                Certified
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500 truncate">{song.artist}</div>
+                        </div>
+                        <div className="flex flex-col items-center px-2">
+                          <span className="text-sm font-bold text-slate-600 leading-none">{song.count}</span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase">Listeners</span>
+                        </div>
                       </div>
-                      <div className="px-2 py-1 bg-slate-100 rounded text-[10px] font-bold text-slate-600">
-                        {song.count} Fans
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="p-4 bg-slate-50 rounded-lg text-slate-400 text-xs italic text-center">
-                  Not enough data for predictions.
+                    );
+                  })}
                 </div>
+              ) : (
+                <p className="text-sm text-slate-400 italic">No listening history matches for this decade yet.</p>
               )}
             </div>
-          </section>
 
+          </div>
         </div>
       </div>
     </div>

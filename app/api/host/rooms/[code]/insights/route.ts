@@ -5,6 +5,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ code: string }> }
 ) {
+  // Await params for Next.js 15
   const { code } = await params;
   const supabase = await createSupabaseServerClient();
 
@@ -37,6 +38,7 @@ export async function GET(
       return NextResponse.json({ success: false, error: "Failed to fetch history" }, { status: 500 });
     }
 
+    // FIX: Define totalHistoryTracks explicitly so it's available for the return object
     const totalHistoryTracks = history?.length || 0;
 
     // --- Insight Calculations ---
@@ -63,13 +65,6 @@ export async function GET(
       }
     });
 
-    // C. Popular Track Frequency
-    const trackFrequency: Record<string, number> = {};
-    history?.forEach(track => {
-      const key = track.track_id;
-      trackFrequency[key] = (trackFrequency[key] || 0) + 1;
-    });
-
     // D. Fetch Request Counts
     const { count: totalRequests } = await supabase
       .from("room_requests")
@@ -87,7 +82,7 @@ export async function GET(
       insights: {
         totalGuests: totalGuests || 0,
         totalRequests: totalRequests || 0,
-        totalHistoryTracks,
+        totalHistoryTracks, // Now this variable exists!
         averageEnergy: parseFloat(averageEnergy.toFixed(2)),
         averageValence: parseFloat(averageValence.toFixed(2)),
         decadeDistribution: decadeCounts,
