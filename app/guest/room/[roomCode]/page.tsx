@@ -53,7 +53,11 @@ export default async function GuestRoomPage(props: RoomPageProps) {
             <p className="text-slate-400 mb-8">
               We require Spotify login to analyze your listening habits. This powers the Vibe Report for the DJ.
             </p>
-            <SpotifyConnectButton connected={false} />
+            {/* FIX: Pass roomCode so the login flow knows where to return */}
+            <SpotifyConnectButton 
+              connected={false} 
+              roomCode={room.code} 
+            />
             <p className="text-xs text-slate-500 mt-6 px-8">
               Your data (top tracks/artists) is deleted 30 days after the event ends.
             </p>
@@ -110,6 +114,7 @@ export default async function GuestRoomPage(props: RoomPageProps) {
             <p className="text-[10px] text-slate-600 uppercase tracking-widest font-bold">
                 Audiocracy Live
             </p>
+            {/* New Disconnect Button */}
             <LeaveRoomButton />
         </footer>
       </div>
