@@ -1,20 +1,76 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import {
   GUEST_ID_COOKIE_NAME,
   GUEST_ROOM_ID_COOKIE_NAME,
   GUEST_ROOM_CODE_COOKIE_NAME,
 } from "@/lib/guestSession";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const queryRoomCode = searchParams.get("roomCode");
+
   const cookieStore = await cookies();
+  const supabase = await createSupabaseServerClient();
 
-  const guest_id = cookieStore.get(GUEST_ID_COOKIE_NAME)?.value;
-  const guest_room_id = cookieStore.get(GUEST_ROOM_ID_COOKIE_NAME)?.value;
-  const guest_room_code = cookieStore.get(GUEST_ROOM_CODE_COOKIE_NAME)?.value;
+  let guestId = cookieStore.get(GUEST_ID_COOKIE_NAME)?.value;
+  let roomId = cookieStore.get(GUEST_ROOM_ID_COOKIE_NAME)?.value;
+  let roomCode = cookieStore.get(GUEST_ROOM_CODE_COOKIE_NAME)?.value;
 
-  // Guest must already be in a room before connecting Spotify
-  if (!guest_id || !guest_room_id || !guest_room_code) {
+  // 1. RECOVERY LOGIC: If cookies are missing but we have a roomCode query param (from QR code flow)
+  if (queryRoomCode && (!roomId || !roomCode)) {
+    // Look up the room ID
+    const { data: room } = await supabase
+      .from("rooms")
+      .select("id, code, is_active")
+      .ilike("code", queryRoomCode)
+      .single();
+
+    if (room && room.is_active) {
+      // Ensure values are strings before setting cookies
+      const resolvedRoomId = room.id.toString();
+      const resolvedRoomCode = room.code;
+
+      roomId = resolvedRoomId;
+      roomCode = resolvedRoomCode;
+
+      // Set the missing cookies now so the session is valid
+      // Note: cookieStore.set can only be called in Server Actions or Route Handlers
+      // We pass the object directly as arguments since Next.js cookies().set supports overloads but explicit objects are safer
+      cookieStore.set({
+          name: GUEST_ROOM_ID_COOKIE_NAME,
+          value: resolvedRoomId,
+          httpOnly: true,
+          path: "/",
+          maxAge: 60 * 60 * 24 // 1 day
+      });
+      
+      cookieStore.set({
+          name: GUEST_ROOM_CODE_COOKIE_NAME,
+          value: resolvedRoomCode,
+          httpOnly: true,
+          path: "/",
+          maxAge: 60 * 60 * 24 
+      });
+    }
+  }
+
+  // 2. Generate a Guest ID if missing (First time visitor)
+  if (!guestId) {
+    guestId = crypto.randomUUID();
+    cookieStore.set({
+      name: GUEST_ID_COOKIE_NAME,
+      value: guestId,
+      httpOnly: true,
+      path: "/",
+      maxAge: 60 * 60 * 24 * 365 // 1 year
+    });
+  }
+
+  // 3. Final Check: Do we have everything needed to proceed?
+  if (!guestId || !roomId || !roomCode) {
+    // If still missing context, we must fallback to the manual entry page
     return NextResponse.redirect(`${process.env.NEXT_PUBLIC_SITE_URL}/enter`);
   }
 
@@ -31,11 +87,10 @@ export async function GET() {
     "user-read-recently-played",
   ].join(" ");
 
-  // Encode guest + roomCode in base64 JSON
-  // Added timestamp to prevent state caching
+  // Encode context in state so it survives the round trip to Spotify
   const statePayload = {
-    guestId: guest_id,
-    roomCode: guest_room_code,
+    guestId: guestId,
+    roomCode: roomCode,
     ts: Date.now(), 
   };
 
